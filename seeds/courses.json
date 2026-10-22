@@ -1,0 +1,132 @@
+[
+  {
+    "departmentCode": "CSC",
+    "courseCode": "MTH201",
+    "title": "Mathematical Methods I",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "ENT211",
+    "title": "Entrepreneurship and Innovation I",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "COS201",
+    "title": "Computer Programming I",
+    "units": 3,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "CSC203",
+    "title": "Discrete Structures",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "IFT211",
+    "title": "Digital Logic Design",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "CSC299",
+    "title": "SIWES 1",
+    "units": 3,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "SEN201",
+    "title": "Introduction to Software Engineering",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-GNS211A",
+    "title": "Introduction to Foreign Language, Grammar and Syntax (Arabic)",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-GNS211F",
+    "title": "Introduction to Foreign Language, Grammar and Syntax (French)",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-GNS211J",
+    "title": "Introduction to Japanese Language, Grammar and Syntax",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-GNS211P",
+    "title": "Introduction to Portuguese Language, Grammar and Syntax",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-GNS201",
+    "title": "Information Literacy and Library Use",
+    "units": 2,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  },
+  {
+    "departmentCode": "CSC",
+    "courseCode": "UA-CSC205",
+    "title": "Web Design and Development Technologies",
+    "units": 3,
+    "level": "200",
+    "semester": "FIRST",
+    "academicSession": "2026/2027",
+    "status": "ACTIVE"
+  }
+]

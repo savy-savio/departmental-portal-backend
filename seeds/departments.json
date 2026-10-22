@@ -1,0 +1,9 @@
+[
+  {
+    "name": "Computer Science",
+    "code": "CSC",
+    "matricCode": "CSC",
+    "faculty": "Faculty of Science",
+    "levels": ["100", "200", "300", "400"]
+  }
+]
