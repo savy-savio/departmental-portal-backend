@@ -1,46 +1,17 @@
-import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
-import { EMAIL_HEADER_PNG_BASE64 } from "./email-header";
 import { deviceVerificationEmail, lecturerInviteEmail, lecturerResetEmail, passwordChangedEmail, passwordResetEmail, welcomeEmail } from "./email.templates";
 
 /**
- * Reusable transactional email service (Gmail App Password, sent with Nodemailer).
- * In development with no Gmail settings the email is printed to the console instead.
- * Production requires GMAIL_USER and GMAIL_APP_PASSWORD (enforced in config/env.ts).
+ * Transactional email over HTTPS (Brevo API). Works on hosts that block SMTP ports.
+ * In development with no BREVO_API_KEY the email is printed to the console instead.
+ * Production requires BREVO_API_KEY and BREVO_SENDER_EMAIL (enforced in config/env.ts).
  */
-let transporter: Transporter | null = null;
+const BREVO_URL = "https://api.brevo.com/v3/smtp/email";
 
-export const getTransporter = (): Transporter | null => {
-  if (!env.gmailConfigured) return null;
-  if (transporter) return transporter;
-
-  const created = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-    auth: {
-      user: env.GMAIL_USER,
-      pass: env.GMAIL_APP_PASSWORD?.replace(/\s/g, ""),
-    },
-  });
-
-  // Runs once, when the transporter is first created, so deploy logs show whether SMTP is reachable.
-  created.verify().then(
-    () => logger.info("SMTP ready"),
-    (e: unknown) => logger.error("SMTP verify failed:", e instanceof Error ? e.message : e),
-  );
-
-  transporter = created;
-  return transporter;
-};
-
-// Banner image used by every email template (referenced there as cid:email-header).
-const HEADER_IMAGE = Buffer.from(EMAIL_HEADER_PNG_BASE64, "base64");
+// The templates reference the banner as cid:email-header. The HTTP API has no inline attachments,
+// so it is served as a normal image from the frontend (put assets/email-header.png in the frontend's public/ folder).
+const headerUrl = (): string => env.EMAIL_HEADER_URL ?? `${env.clientUrl}/email-header.png`;
 
 export interface SendEmailInput {
   to: string | string[];
@@ -50,20 +21,34 @@ export interface SendEmailInput {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<void> {
-  const mailer = getTransporter();
-  if (!mailer) {
-    logger.warn(`[email:dev] Gmail not configured - printing instead of sending.\nTo: ${input.to}\nSubject: ${input.subject}\n${input.text}`);
+  if (!env.emailConfigured) {
+    logger.warn(`[email:dev] Brevo not configured - printing instead of sending.\nTo: ${input.to}\nSubject: ${input.subject}\n${input.text}`);
     return;
   }
-  // Gmail always sends from the authenticated account; EMAIL_FROM only controls the display name (or an alias you added under "Send mail as").
-  await mailer.sendMail({
-    from: env.EMAIL_FROM ?? `Departmental Portal <${env.GMAIL_USER}>`,
-    to: input.to,
-    subject: input.subject,
-    html: input.html,
-    text: input.text,
-    attachments: [{ filename: "email-header.png", content: HEADER_IMAGE, contentType: "image/png", cid: "email-header" }],
+
+  const recipients = (Array.isArray(input.to) ? input.to : [input.to]).map((email) => ({ email }));
+
+  const res = await fetch(BREVO_URL, {
+    method: "POST",
+    headers: {
+      "api-key": env.BREVO_API_KEY as string,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: env.BREVO_SENDER_NAME, email: env.BREVO_SENDER_EMAIL },
+      to: recipients,
+      subject: input.subject,
+      htmlContent: input.html.replaceAll("cid:email-header", headerUrl()),
+      textContent: input.text,
+    }),
+    signal: AbortSignal.timeout(15_000),
   });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Brevo ${res.status}: ${detail.slice(0, 300)}`);
+  }
 }
 
 /** Emails must never break the main request, and must never leak whether an account exists. */

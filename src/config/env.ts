@@ -13,10 +13,12 @@ const schema = z
     ONBOARDING_TOKEN_EXPIRES_IN: z.string().default("15m"),
     PASSWORD_RESET_EXPIRES_MINUTES: z.coerce.number().int().positive().default(30),
     BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
-    // Gmail (App Password). Set both together, or none (development then prints emails to the console).
-    GMAIL_USER: z.string().email().optional(),
-    GMAIL_APP_PASSWORD: z.string().optional(),
-    EMAIL_FROM: z.string().optional(),
+    // Email over HTTPS (Brevo API). Set both BREVO_API_KEY and BREVO_SENDER_EMAIL together, or none (development then prints emails to the console).
+    BREVO_API_KEY: z.string().optional(),
+    BREVO_SENDER_EMAIL: z.string().email().optional(),
+    BREVO_SENDER_NAME: z.string().default("Departmental Portal"),
+    // Full URL of the email banner image. Defaults to <first CLIENT_URL>/email-header.png.
+    EMAIL_HEADER_URL: z.string().url().optional(),
     CLIENT_URL: z.string().min(1, "CLIENT_URL is required"),
     TRUST_PROXY: z.coerce.number().int().min(0).default(0),
     CLOUDINARY_CLOUD_NAME: z.string().optional(),
@@ -57,19 +59,16 @@ const schema = z
     if (env.VAPID_PUBLIC_KEY && !/^[A-Za-z0-9_-]{87}$/.test(env.VAPID_PUBLIC_KEY)) {
       ctx.addIssue({ code: "custom", path: ["VAPID_PUBLIC_KEY"], message: "VAPID_PUBLIC_KEY must be the 87-character URL-safe key from `web-push generate-vapid-keys`" });
     }
-    const gmailKeys = ["GMAIL_USER", "GMAIL_APP_PASSWORD"] as const;
-    if (gmailKeys.some((k) => env[k]) && !gmailKeys.every((k) => env[k])) {
-      ctx.addIssue({ code: "custom", path: ["GMAIL_USER"], message: "Set GMAIL_USER and GMAIL_APP_PASSWORD together (or none in development)" });
+    const emailKeys = ["BREVO_API_KEY", "BREVO_SENDER_EMAIL"] as const;
+    if (emailKeys.some((k) => env[k]) && !emailKeys.every((k) => env[k])) {
+      ctx.addIssue({ code: "custom", path: ["BREVO_API_KEY"], message: "Set BREVO_API_KEY and BREVO_SENDER_EMAIL together (or none in development)" });
     }
     if (env.NODE_ENV === "production") {
-      for (const key of gmailKeys) {
+      for (const key of emailKeys) {
         if (!env[key]) ctx.addIssue({ code: "custom", path: [key], message: "Required in production" });
       }
       for (const key of ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"] as const) {
         if (!env[key]) ctx.addIssue({ code: "custom", path: [key], message: "Required in production" });
-      }
-      if (!env.EMAIL_FROM) {
-        ctx.addIssue({ code: "custom", path: ["EMAIL_FROM"], message: "Required in production" });
       }
     }
   });
@@ -100,6 +99,6 @@ export const env = {
   socketEnabled: data.SOCKET_ENABLED === "true",
   pushConfigured: Boolean(data.VAPID_PUBLIC_KEY && data.VAPID_PRIVATE_KEY && data.VAPID_SUBJECT),
   pushExtraHosts: (data.PUSH_EXTRA_ENDPOINT_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean),
-  gmailConfigured: Boolean(data.GMAIL_USER && data.GMAIL_APP_PASSWORD),
+  emailConfigured: Boolean(data.BREVO_API_KEY && data.BREVO_SENDER_EMAIL),
   cloudinaryConfigured: Boolean(data.CLOUDINARY_CLOUD_NAME && data.CLOUDINARY_API_KEY && data.CLOUDINARY_API_SECRET),
 };
