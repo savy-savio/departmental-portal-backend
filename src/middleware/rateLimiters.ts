@@ -22,12 +22,51 @@ export const pingLimiter = make(MIN, 6000, "Too many requests.");
  */
 const LIVE_QUIZ_PATHS = ["/api/v1/student/quiz/", "/api/v1/representative/quiz-games"];
 export const isLiveQuizRequest = (req: { originalUrl: string }) => LIVE_QUIZ_PATHS.some((p) => req.originalUrl.startsWith(p));
-export const globalLimiter = make(15 * MIN, 600, "Too many requests. Please slow down.", isLiveQuizRequest);
-export const loginLimiter = make(15 * MIN, 20, "Too many login attempts. Please try again later.");
-export const verifyLimiter = make(15 * MIN, 10, "Too many verification attempts. Please try again later.");
-export const onboardingLimiter = make(15 * MIN, 20, "Too many attempts. Please try again later.");
-export const forgotPasswordLimiter = make(60 * MIN, 5, "Too many reset requests. Please try again later.");
-export const resetPasswordLimiter = make(15 * MIN, 10, "Too many attempts. Please try again later.");
+export const globalLimiter = make(15 * MIN, 6000, "Too many requests. Please slow down.", isLiveQuizRequest);
+/**
+ * Public auth limiters. A whole class shares one campus Wi-Fi IP (and behind an unconfigured proxy EVERY user shares the proxy's IP), so a
+ * plain per-IP cap locks classmates out after a handful of tries. These are keyed by the IDENTITY being attempted (matric number / email),
+ * so one person's typos never block anyone else, and they count FAILED attempts only, so a successful sign-in never uses up the allowance.
+ * A generous per-IP failure cap sits behind them purely as a flood backstop (far above any real classroom).
+ */
+const identityOf = (pick: (body: Record<string, unknown>) => unknown) => (req: { body?: unknown; ip?: string }) => {
+  const raw = pick((req.body ?? {}) as Record<string, unknown>);
+  const id = typeof raw === "string" ? raw.trim().toLowerCase().replace(/\s+/g, "") : "";
+  return id ? `id:${id.slice(0, 80)}` : `ip:${req.ip ?? "unknown"}`;
+};
+const makeByIdentity = (
+  windowMs: number, limit: number, message: string, key: (req: { body?: unknown; ip?: string }) => string, failedOnly = true,
+) =>
+  rateLimit({
+    windowMs, limit, skipSuccessfulRequests: failedOnly, standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: (req) => key(req),
+    handler: (_req, res) => void res.status(429).json({ success: false, message }),
+  });
+const byMatric = identityOf((b) => b.matricNumber);
+const byEmail = identityOf((b) => b.email);
+const authIpBackstop = (message: string, windowMs = 15 * MIN, limit = 300, failedOnly = true) =>
+  rateLimit({
+    windowMs, limit, skipSuccessfulRequests: failedOnly, standardHeaders: "draft-7", legacyHeaders: false,
+    keyGenerator: (req) => `ip:${req.ip ?? "unknown"}`,
+    handler: (_req, res) => void res.status(429).json({ success: false, message }),
+  });
+
+export const loginLimiter = [
+  makeByIdentity(15 * MIN, 10, "Too many login attempts. Please try again later.", byEmail),
+  authIpBackstop("Too many login attempts from this network. Please try again later."),
+];
+export const verifyLimiter = [
+  makeByIdentity(15 * MIN, 10, "Too many verification attempts for this matric number. Please try again in a few minutes.", byMatric),
+  authIpBackstop("Too many verification attempts from this network. Please try again later."),
+];
+// /onboarding/complete is already gated by the short-lived signed onboarding token, so only a flood backstop is needed.
+export const onboardingLimiter = authIpBackstop("Too many attempts. Please try again later.");
+// Every forgot-password request sends an email, so ALL requests count (not just failures), per email address.
+export const forgotPasswordLimiter = [
+  makeByIdentity(60 * MIN, 5, "Too many reset requests for this email. Please try again later.", byEmail, false),
+  authIpBackstop("Too many reset requests from this network. Please try again later.", 60 * MIN, 200, false),
+];
+// Reset is gated by a 32+ char random token, so only a flood backstop is needed.
+export const resetPasswordLimiter = authIpBackstop("Too many attempts. Please try again later.", 15 * MIN, 200);
 export const uploadLimiter = make(60 * MIN, 30, "Too many uploads. Please try again later.");
 export const complaintLimiter = make(60 * MIN, 10, "You're submitting complaints too quickly. Please try again later.");
 export const voteLimiter = make(15 * MIN, 20, "Too many voting attempts. Please try again later.");
