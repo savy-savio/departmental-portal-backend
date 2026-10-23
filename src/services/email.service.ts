@@ -1,8 +1,7 @@
-import fs from "fs";
-import path from "path";
 import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
+import { EMAIL_HEADER_PNG_BASE64 } from "./email-header";
 import { deviceVerificationEmail, lecturerInviteEmail, lecturerResetEmail, passwordChangedEmail, passwordResetEmail, welcomeEmail } from "./email.templates";
 
 /**
@@ -24,7 +23,7 @@ const getTransporter = (): Transporter | null => {
 };
 
 // Banner image used by every email template (referenced there as cid:email-header).
-const HEADER_IMAGE = path.resolve(process.cwd(), "assets", "email-header.png");
+const HEADER_IMAGE = Buffer.from(EMAIL_HEADER_PNG_BASE64, "base64");
 
 export interface SendEmailInput {
   to: string | string[];
@@ -46,42 +45,6 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
     subject: input.subject,
     html: input.html,
     text: input.text,
-    attachments: fs.existsSync(HEADER_IMAGE)
-      ? [{ filename: "email-header.png", path: HEADER_IMAGE, cid: "email-header" }]
-      : [],
+    attachments: [{ filename: "email-header.png", content: HEADER_IMAGE, contentType: "image/png", cid: "email-header" }],
   });
 }
-
-/** Emails must never break the main request, and must never leak whether an account exists. */
-export function sendInBackground(label: string, task: Promise<void>): void {
-  task.catch((err) => logger.error(`Email "${label}" failed:`, err instanceof Error ? err.message : err));
-}
-
-export const sendPasswordResetEmail = (to: string, firstName: string, rawToken: string): Promise<void> =>
-  sendEmail({
-    to,
-    ...passwordResetEmail({
-      firstName,
-      resetUrl: `${env.clientUrl}/reset-password?token=${encodeURIComponent(rawToken)}`,
-      expiresInMinutes: env.PASSWORD_RESET_EXPIRES_MINUTES,
-    }),
-  });
-
-export const sendWelcomeEmail = (to: string, firstName: string): Promise<void> =>
-  sendEmail({ to, ...welcomeEmail({ firstName, loginUrl: `${env.clientUrl}/login` }) });
-
-export const sendPasswordChangedEmail = (to: string, firstName: string): Promise<void> =>
-  sendEmail({ to, ...passwordChangedEmail({ firstName }) });
-
-export const sendDeviceVerificationEmail = (to: string, firstName: string, code: string, purpose: "REGISTER" | "REPLACE"): Promise<void> =>
-  sendEmail({ to, ...deviceVerificationEmail({ firstName, code, purpose, expiresInMinutes: env.DEVICE_VERIFICATION_TTL_MINUTES }) });
-
-export const sendLecturerInviteEmail = (to: string, firstName: string, rawToken: string, expiresInHours: number): Promise<void> =>
-  sendEmail({ to, ...lecturerInviteEmail({ firstName, activateUrl: `${env.clientUrl}/lecturer/activate?token=${encodeURIComponent(rawToken)}`, expiresInHours }) });
-export const sendLecturerResetEmail = (to: string, firstName: string, rawToken: string): Promise<void> =>
-  sendEmail({ to, ...lecturerResetEmail({ firstName, resetUrl: `${env.clientUrl}/lecturer/reset-password?token=${encodeURIComponent(rawToken)}`, expiresInMinutes: env.PASSWORD_RESET_EXPIRES_MINUTES }) });
-
-export const sendHodInviteEmail = (to: string, firstName: string, rawToken: string, expiresInHours: number): Promise<void> =>
-  sendEmail({ to, ...lecturerInviteEmail({ firstName, activateUrl: `${env.clientUrl}/hod/activate?token=${encodeURIComponent(rawToken)}`, expiresInHours }) });
-export const sendHodResetEmail = (to: string, firstName: string, rawToken: string): Promise<void> =>
-  sendEmail({ to, ...lecturerResetEmail({ firstName, resetUrl: `${env.clientUrl}/hod/reset-password?token=${encodeURIComponent(rawToken)}`, expiresInMinutes: env.PASSWORD_RESET_EXPIRES_MINUTES }) });
