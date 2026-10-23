@@ -1,20 +1,30 @@
-import { Resend } from "resend";
+import fs from "fs";
+import path from "path";
+import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
 import { deviceVerificationEmail, lecturerInviteEmail, lecturerResetEmail, passwordChangedEmail, passwordResetEmail, welcomeEmail } from "./email.templates";
 
 /**
- * Reusable transactional email service (Resend).
- * In development with no RESEND_API_KEY the email is printed to the console instead,
- * so the reset flow can be tested without an email account. Production requires the key
- * (enforced in config/env.ts).
+ * Reusable transactional email service (Gmail App Password, sent with Nodemailer).
+ * In development with no Gmail settings the email is printed to the console instead.
+ * Production requires GMAIL_USER and GMAIL_APP_PASSWORD (enforced in config/env.ts).
  */
-let client: Resend | null = null;
-const getClient = (): Resend | null => {
-  if (!env.RESEND_API_KEY) return null;
-  client ??= new Resend(env.RESEND_API_KEY);
-  return client;
+let transporter: Transporter | null = null;
+const getTransporter = (): Transporter | null => {
+  if (!env.gmailConfigured) return null;
+  transporter ??= nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: env.GMAIL_USER,
+      pass: env.GMAIL_APP_PASSWORD?.replace(/\s/g, ""),
+    },
+  });
+  return transporter;
 };
+
+// Banner image used by every email template (referenced there as cid:email-header).
+const HEADER_IMAGE = path.resolve(process.cwd(), "assets", "email-header.png");
 
 export interface SendEmailInput {
   to: string | string[];
@@ -24,19 +34,22 @@ export interface SendEmailInput {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<void> {
-  const resend = getClient();
-  if (!resend) {
-    logger.warn(`[email:dev] RESEND_API_KEY not set - printing instead of sending.\nTo: ${input.to}\nSubject: ${input.subject}\n${input.text}`);
+  const mailer = getTransporter();
+  if (!mailer) {
+    logger.warn(`[email:dev] Gmail not configured - printing instead of sending.\nTo: ${input.to}\nSubject: ${input.subject}\n${input.text}`);
     return;
   }
-  const { error } = await resend.emails.send({
-    from: env.EMAIL_FROM ?? "Departmental Portal <onboarding@resend.dev>",
+  // Gmail always sends from the authenticated account; EMAIL_FROM only controls the display name (or an alias you added under "Send mail as").
+  await mailer.sendMail({
+    from: env.EMAIL_FROM ?? `Departmental Portal <${env.GMAIL_USER}>`,
     to: input.to,
     subject: input.subject,
     html: input.html,
     text: input.text,
+    attachments: fs.existsSync(HEADER_IMAGE)
+      ? [{ filename: "email-header.png", path: HEADER_IMAGE, cid: "email-header" }]
+      : [],
   });
-  if (error) throw new Error(`Resend failed: ${error.message}`);
 }
 
 /** Emails must never break the main request, and must never leak whether an account exists. */
