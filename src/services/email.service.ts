@@ -10,15 +10,32 @@ import { deviceVerificationEmail, lecturerInviteEmail, lecturerResetEmail, passw
  * Production requires GMAIL_USER and GMAIL_APP_PASSWORD (enforced in config/env.ts).
  */
 let transporter: Transporter | null = null;
-const getTransporter = (): Transporter | null => {
+
+export const getTransporter = (): Transporter | null => {
   if (!env.gmailConfigured) return null;
-  transporter ??= nodemailer.createTransport({
-    service: "gmail",
+  if (transporter) return transporter;
+
+  const created = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    requireTLS: true,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
     auth: {
       user: env.GMAIL_USER,
       pass: env.GMAIL_APP_PASSWORD?.replace(/\s/g, ""),
     },
   });
+
+  // Runs once, when the transporter is first created, so deploy logs show whether SMTP is reachable.
+  created.verify().then(
+    () => logger.info("SMTP ready"),
+    (e: unknown) => logger.error("SMTP verify failed:", e instanceof Error ? e.message : e),
+  );
+
+  transporter = created;
   return transporter;
 };
 
@@ -75,10 +92,12 @@ export const sendDeviceVerificationEmail = (to: string, firstName: string, code:
 
 export const sendLecturerInviteEmail = (to: string, firstName: string, rawToken: string, expiresInHours: number): Promise<void> =>
   sendEmail({ to, ...lecturerInviteEmail({ firstName, activateUrl: `${env.clientUrl}/lecturer/activate?token=${encodeURIComponent(rawToken)}`, expiresInHours }) });
+
 export const sendLecturerResetEmail = (to: string, firstName: string, rawToken: string): Promise<void> =>
   sendEmail({ to, ...lecturerResetEmail({ firstName, resetUrl: `${env.clientUrl}/lecturer/reset-password?token=${encodeURIComponent(rawToken)}`, expiresInMinutes: env.PASSWORD_RESET_EXPIRES_MINUTES }) });
 
 export const sendHodInviteEmail = (to: string, firstName: string, rawToken: string, expiresInHours: number): Promise<void> =>
   sendEmail({ to, ...lecturerInviteEmail({ firstName, activateUrl: `${env.clientUrl}/hod/activate?token=${encodeURIComponent(rawToken)}`, expiresInHours }) });
+
 export const sendHodResetEmail = (to: string, firstName: string, rawToken: string): Promise<void> =>
   sendEmail({ to, ...lecturerResetEmail({ firstName, resetUrl: `${env.clientUrl}/hod/reset-password?token=${encodeURIComponent(rawToken)}`, expiresInMinutes: env.PASSWORD_RESET_EXPIRES_MINUTES }) });
