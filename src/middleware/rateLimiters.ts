@@ -110,4 +110,4 @@ const makeHodKeyed = (windowMs: number, limit: number, message: string) =>
 export const lecturerPushLimiter = makeLecturerKeyed(15 * MIN, 60, "Too many notification settings changes. Please try again later.");
 export const hodPushLimiter = makeHodKeyed(15 * MIN, 60, "Too many notification settings changes. Please try again later.");
 export const hodWriteLimiter = makeHodKeyed(60 * MIN, 600, "You're making changes too quickly. Please try again later.");
-export const hodUploadLimiter = makeHodKeyed(60 * MIN, 60, "Too many uploads. Please try again later.");
+export const hodUploadLimiter = makeHodKeyed(60 * MIN, 60, "Too many uploads. Please try again later.")
