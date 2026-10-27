@@ -1,3 +1,23 @@
 [
-  
+  {
+    "departmentCode": "CSC",
+    "staffId": "CSC-001",
+    "firstName": "Dr. (Mrs) O. B",
+    "lastName": "Ishola",
+    "email": "eazyhr10@gmail.com",
+    "phone": "+2348011111111",
+    "courses": [
+      "CSC203"
+    ]
+  },
+  {
+    "departmentCode": "CSC",
+    "staffId": "CSC-002",
+    "firstName": "Dr. A. Y.",
+    "lastName": "Atumoshi",
+    "email": "ssavy205@gmail.com",
+    "courses": [
+      "SEN201"
+    ]
+  }
 ]
