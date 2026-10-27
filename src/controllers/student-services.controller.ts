@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import * as attendance from "../services/student-attendance.service";
 import { attendanceSecurity } from "../services/attendance";
 import * as complaints from "../services/student-complaints.service";
+import * as complaintAi from "../services/ai/complaint-ai.service";
 import * as notifications from "../services/notification.service";
 import { AppError } from "../utils/AppError";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -62,6 +63,13 @@ export const complaintStats = asyncHandler(async (req: Request, res: Response) =
 });
 export const complaintConstraints = asyncHandler(async (_req: Request, res: Response) => {
   sendSuccess(res, complaints.uploadConstraints());
+});
+export const complaintAiInfo = asyncHandler(async (_req: Request, res: Response) => {
+  sendSuccess(res, complaintAi.complaintAiInfo());
+});
+export const complaintAiAssist = asyncHandler(async (req: Request, res: Response) => {
+  const { student, department } = authed(req);
+  sendSuccess(res, await complaintAi.assistComplaint(student, department, req.body));
 });
 export const getComplaint = asyncHandler(async (req: Request, res: Response) => {
   const { student, department } = authed(req);

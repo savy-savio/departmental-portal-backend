@@ -6,7 +6,7 @@ export interface IQuizGame {
   title: string;
   secondsPerQuestion: number;
   /** Snapshot taken when the game is hosted: later edits to the quiz don't affect a running game. */
-  questions: { text: string; options: string[]; correctIndex: number }[];
+  questions: { text: string; options: string[]; correctIndex: number; jackpot?: boolean; type?: "MULTIPLE_CHOICE" | "TRUE_FALSE" }[];
   host: Types.ObjectId;
   hostName: string;
   department: Types.ObjectId;
@@ -22,7 +22,7 @@ export interface IQuizGame {
   lastHostActionAt: Date;
   finishedAt?: Date;
 }
-const questionSchema = new Schema({ text: String, options: [String], correctIndex: Number }, { _id: false });
+const questionSchema = new Schema({ text: String, options: [String], correctIndex: Number, jackpot: { type: Boolean, default: false }, type: { type: String, enum: ["MULTIPLE_CHOICE", "TRUE_FALSE"], default: "MULTIPLE_CHOICE" } }, { _id: false });
 const schema = new Schema<IQuizGame>(
   {
     quiz: { type: Schema.Types.ObjectId, ref: "Quiz", required: true },

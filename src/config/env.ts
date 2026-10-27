@@ -47,6 +47,26 @@ const schema = z
     // Real-time (Socket.IO). A socket session lasts at most this long before the client must reconnect (which re-checks the token and the account).
     SOCKET_ENABLED: z.enum(["true", "false"]).default("true"),
     SOCKET_MAX_SESSION_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+    // AI writing assistant for complaints. Two providers: "gemini" (Google AI Studio, has a free tier) or "anthropic" (paid).
+    // AI_PROVIDER is optional: when unset, the provider whose key is set is used (Gemini first). With no key the assistant is off and the endpoint answers 503.
+    AI_PROVIDER: z.enum(["gemini", "anthropic"]).optional(),
+    GEMINI_API_KEY: z.string().optional(),
+    ANTHROPIC_API_KEY: z.string().optional(),
+    // Optional override. Defaults: gemini-2.5-flash-lite (Gemini) / claude-haiku-5-5 (Anthropic).
+    AI_MODEL: z.string().optional(),
+    AI_TIMEOUT_MS: z.coerce.number().int().min(3000).max(60000).default(25000),
+    // Time zone used for the date printed on an AI-drafted letter (any IANA name).
+    PORTAL_TIMEZONE: z
+      .string()
+      .default("Africa/Lagos")
+      .refine((tz) => {
+        try {
+          new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+          return true;
+        } catch {
+          return false;
+        }
+      }, "PORTAL_TIMEZONE must be a valid IANA time zone, e.g. Africa/Lagos"),
   })
   .superRefine((env, ctx) => {
     const vapid = [env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY, env.VAPID_SUBJECT];
@@ -90,6 +110,13 @@ const clientOrigins = data.CLIENT_URL.split(",")
   .map((o) => o.trim().replace(/\/$/, ""))
   .filter(Boolean);
 
+// Which AI provider the complaint assistant uses, and with which key and model.
+const geminiKey = data.GEMINI_API_KEY?.trim() || undefined;
+const anthropicKey = data.ANTHROPIC_API_KEY?.trim() || undefined;
+const aiProvider: "gemini" | "anthropic" = data.AI_PROVIDER ?? (geminiKey ? "gemini" : anthropicKey ? "anthropic" : "gemini");
+const aiApiKey = aiProvider === "gemini" ? geminiKey : anthropicKey;
+const aiModel = data.AI_MODEL?.trim() || (aiProvider === "gemini" ? "gemini-3.5-flash-lite" : "claude-haiku-5-5");
+
 export const env = {
   ...data,
   clientOrigins,
@@ -100,5 +127,9 @@ export const env = {
   pushConfigured: Boolean(data.VAPID_PUBLIC_KEY && data.VAPID_PRIVATE_KEY && data.VAPID_SUBJECT),
   pushExtraHosts: (data.PUSH_EXTRA_ENDPOINT_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean),
   emailConfigured: Boolean(data.BREVO_API_KEY && data.BREVO_SENDER_EMAIL),
+  aiProvider,
+  aiApiKey,
+  aiModel,
+  aiConfigured: Boolean(aiApiKey),
   cloudinaryConfigured: Boolean(data.CLOUDINARY_CLOUD_NAME && data.CLOUDINARY_API_KEY && data.CLOUDINARY_API_SECRET),
 };

@@ -13,6 +13,8 @@ export interface IQuizPlayer {
   finalRank?: number; // fixed when the game finishes
   joinedAt: Date;
   seq: number; // join order, the last tie-break
+  lastQuestion: number; // the last question that was paid out (-1 = none yet) and what its cash drop did to this player
+  lastDrop: number; // + stole from the leader, - was robbed
 }
 const schema = new Schema<IQuizPlayer>(
   {
@@ -28,6 +30,8 @@ const schema = new Schema<IQuizPlayer>(
     finalRank: Number,
     joinedAt: { type: Date, default: Date.now },
     seq: { type: Number, default: 0 },
+    lastQuestion: { type: Number, default: -1 },
+    lastDrop: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

@@ -15,21 +15,85 @@ export interface Violation { status: number; code: string; message: string }
 const v = (status: number, code: string, message: string): Violation => ({ status, code, message });
 
 /* ------------------------------ scoring (4a) ------------------------------ */
+// The quiz plays for MONEY: every "point" is one dollar, so a lightning-fast correct answer is worth $1,000. Stored numbers stay plain integers
+// (score, points, streakBonus); `formatMoney` is how they are shown.
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** 1000 for an instant answer down to 500 at the last moment. */
+/** $1,000 for an instant answer down to $500 at the last moment. */
 export const basePoints = (elapsedMs: number, limitMs: number) => Math.round(1000 * (1 - clamp(elapsedMs, 0, limitMs) / limitMs / 2));
-/** 0, 100, 200 ... capped at 500; `streak` counts consecutive correct answers including this one. */
+/** The "hot streak" bonus: $0, $100, $200 ... capped at $500; `streak` counts consecutive correct answers including this one. */
 export const streakBonus = (streak: number) => (streak >= 1 ? Math.min(500, 100 * (streak - 1)) : 0);
+/** A JACKPOT question (flagged by the host) pays double: base and hot-streak bonus together. */
+export const JACKPOT_MULTIPLIER = 2;
 
 export interface ScoredAnswer { correct: boolean; elapsedMs: number; base: number; streakAfter: number; streakBonus: number; points: number }
-export function scoreAnswer(i: { correct: boolean; elapsedMs: number; limitMs: number; previousStreak: number }): ScoredAnswer {
+export function scoreAnswer(i: { correct: boolean; elapsedMs: number; limitMs: number; previousStreak: number; jackpot?: boolean }): ScoredAnswer {
   const elapsedMs = clamp(Math.round(i.elapsedMs), 0, i.limitMs);
-  if (!i.correct) return { correct: false, elapsedMs, base: 0, streakAfter: 0, streakBonus: 0, points: 0 }; // wrong: no points, streak resets
+  if (!i.correct) return { correct: false, elapsedMs, base: 0, streakAfter: 0, streakBonus: 0, points: 0 }; // wrong: no money, streak resets
   const streakAfter = Math.max(0, i.previousStreak) + 1;
   const base = basePoints(elapsedMs, i.limitMs);
   const bonus = streakBonus(streakAfter);
-  return { correct: true, elapsedMs, base, streakAfter, streakBonus: bonus, points: base + bonus };
+  return { correct: true, elapsedMs, base, streakAfter, streakBonus: bonus, points: (base + bonus) * (i.jackpot ? JACKPOT_MULTIPLIER : 1) };
+}
+
+/* ------------------------------ money display ------------------------------ */
+/** 12500 -> "$12,500". Whole dollars only; never throws on odd input. */
+export function formatMoney(amount: number): string {
+  const n = Math.round(Number.isFinite(amount) ? amount : 0);
+  return `${n < 0 ? "-" : ""}$${String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+}
+
+/** A change of money with its sign: +$1,050, -$500, $0. */
+export function formatChange(amount: number): string {
+  const n = Math.round(Number.isFinite(amount) ? amount : 0);
+  return n > 0 ? `+${formatMoney(n)}` : formatMoney(n);
+}
+
+/** A player's "net worth" title. It is judged against the most a game could pay without bonuses ($1,000 a question), so it means the same in a 5-question quiz and a 50-question one, and players level up as the game goes on. */
+export interface WealthTier { level: number; id: string; title: string; emoji: string }
+const WEALTH_TIERS: (WealthTier & { from: number })[] = [
+  { from: 0, level: 0, id: "broke", title: "Broke", emoji: "🪙" },
+  { from: 0.000001, level: 1, id: "pocket-change", title: "Pocket Change", emoji: "💵" },
+  { from: 0.2, level: 2, id: "saving-up", title: "Saving Up", emoji: "🐷" },
+  { from: 0.4, level: 3, id: "big-spender", title: "Big Spender", emoji: "🛍️" },
+  { from: 0.6, level: 4, id: "high-roller", title: "High Roller", emoji: "🎩" },
+  { from: 0.8, level: 5, id: "millionaire", title: "Millionaire", emoji: "💎" },
+  { from: 1, level: 6, id: "billionaire", title: "Billionaire", emoji: "👑" },
+];
+export function wealthTier(score: number, totalQuestions: number): WealthTier {
+  const ratio = totalQuestions > 0 ? Math.max(0, score) / (totalQuestions * 1000) : 0;
+  let hit = WEALTH_TIERS[0];
+  for (const t of WEALTH_TIERS) if (ratio >= t.from) hit = t;
+  const { level, id, title, emoji } = hit;
+  return { level, id, title, emoji };
+}
+
+/** The one-line "cash register" message shown after each question. Deterministic, so the same result always reads the same. */
+export function cashHeadline(i: { answered: boolean; correct: boolean; points: number; streak: number; jackpot: boolean; speedRank: number | null }): string {
+  const money = formatMoney(i.points);
+  if (!i.answered) return i.jackpot ? "😴 You slept through the JACKPOT!" : "😴 Too slow! You left money on the table.";
+  if (!i.correct) return i.jackpot ? "💥 Jackpot missed! No cash this round." : "💸 Ouch! No cash this round.";
+  if (i.jackpot) return `🎰 JACKPOT! +${money}`;
+  if (i.streak >= 3) return `🔥 ${i.streak} in a row! +${money}`;
+  if (i.speedRank === 1) return `⚡ Fastest hands in the room! +${money}`;
+  return `💰 Cha-ching! +${money}`;
+}
+
+/* ------------------------------ cash drops ------------------------------ */
+// After a question is paid out, the player who answered correctly FASTEST steals a small slice of the leader's cash. Nobody is robbed when the
+// fastest player is the leader, when nobody was right, or when the leader has too little for a $10 slice. The money moves; none is created.
+export const CASH_DROP_PERCENT = 5; // % of the leader's cash
+export const CASH_DROP_CAP = 500; // never more than this
+export const CASH_DROP_STEP = 10; // in whole tens, so the amounts read cleanly
+export const dropAmount = (leaderCash: number) =>
+  Math.min(CASH_DROP_CAP, Math.floor((Math.max(0, Math.floor(leaderCash)) * CASH_DROP_PERCENT) / (100 * CASH_DROP_STEP)) * CASH_DROP_STEP);
+
+/** The line that tells everyone about a cash drop, from the point of view of whoever is reading it. */
+export function cashDropMessage(role: "THIEF" | "VICTIM" | "OTHER", thief: string, victim: string, amount: number): string {
+  const m = formatMoney(amount);
+  if (role === "THIEF") return `🦹 You stole ${m} from the leader, ${victim}!`;
+  if (role === "VICTIM") return `😱 ${thief} stole ${m} from you!`;
+  return `🦹 ${thief} stole ${m} from the leader, ${victim}!`;
 }
 
 /* ------------------------------ ranking ------------------------------ */
@@ -45,6 +109,66 @@ export interface TimedAnswer { playerId: string; correct: boolean; elapsedMs: nu
 /** The correct answers, fastest first (a tie goes to the one the server received first). */
 export const fastestCorrect = (answers: TimedAnswer[]) =>
   answers.filter((a) => a.correct).sort((a, b) => a.elapsedMs - b.elapsedMs || a.receivedSeq - b.receivedSeq);
+
+/* ------------------------------ paying out a question ------------------------------ */
+export interface SettlePlayer extends Rankable {
+  streak: number; correctCount: number; totalCorrectMs: number;
+  /** Which question was paid out last (-1: none yet) and what its cash drop did to this player (+ stole, - was robbed), for the reveal screen. */
+  lastQuestion: number; lastDrop: number;
+}
+export interface SettleAnswer { playerId: string; correct: boolean; elapsedMs: number; points: number; streakAfter: number; receivedSeq: number }
+export interface Settlement {
+  id: string; score: number; streak: number; correctCount: number; totalCorrectMs: number; rank: number;
+  lastQuestion: number; lastDrop: number;
+}
+export interface CashDrop { thiefId: string; victimId: string; amount: number }
+
+/**
+ * Everything that happens to the money when a question closes, in this order: (1) each answer pays its points, (2) the fastest correct player
+ * may steal from the leader, (3) ranks are fixed. Pure: no clock, no storage.
+ *
+ * A player who is already marked as settled for this question (an earlier attempt got part-way before a restart) is left exactly as stored, and
+ * no cash drop is made on a retry, so nobody is ever paid twice.
+ */
+export function settleQuestion(players: SettlePlayer[], answers: SettleAnswer[], questionIndex: number): { players: Settlement[]; drop: CashDrop | null } {
+  const byPlayer = new Map(answers.map((a) => [a.playerId, a]));
+  const retry = players.some((p) => p.lastQuestion === questionIndex);
+
+  const rows = players.map((p) => {
+    if (p.lastQuestion === questionIndex) return { ...p, drop: p.lastDrop }; // already paid
+    const a = byPlayer.get(p.id);
+    if (!a) return { ...p, streak: 0, drop: 0 }; // no answer: the streak resets
+    return {
+      ...p, score: p.score + a.points, streak: a.streakAfter, correctCount: p.correctCount + (a.correct ? 1 : 0),
+      totalCorrectMs: p.totalCorrectMs + (a.correct ? a.elapsedMs : 0), drop: 0,
+    };
+  });
+
+  let drop: CashDrop | null = null;
+  if (!retry && rows.length >= 2) {
+    const leader = rankPlayers(rows)[0];
+    const thief = fastestCorrect(answers)[0];
+    if (thief && thief.playerId !== leader.id) {
+      const amount = dropAmount(leader.score);
+      const from = rows.find((r) => r.id === leader.id);
+      const to = rows.find((r) => r.id === thief.playerId);
+      if (amount > 0 && from && to) {
+        from.score -= amount; from.drop = -amount;
+        to.score += amount; to.drop = amount;
+        drop = { thiefId: to.id, victimId: from.id, amount };
+      }
+    }
+  }
+
+  const ranks = new Map(rankPlayers(rows).map((r) => [r.id, r.rank]));
+  return {
+    drop,
+    players: rows.map((r) => ({
+      id: r.id, score: r.score, streak: r.streak, correctCount: r.correctCount, totalCorrectMs: r.totalCorrectMs, rank: ranks.get(r.id) as number,
+      lastQuestion: questionIndex, lastDrop: r.drop,
+    })),
+  };
+}
 
 /** One emoji "character" as people see it: pictograph (+ skin tone / variation selector), joined sequences (family, couple...), flags, keycaps. */
 const EMOJI_UNIT = String.raw`\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?`;
@@ -71,10 +195,21 @@ export function validateNickname(raw: unknown): { ok: true; nickname: string; ke
 export const isPin = (s: unknown): s is string => typeof s === "string" && /^\d{6}$/.test(s);
 export const generatePin = (randomInt: (min: number, maxExclusive: number) => number) => String(randomInt(100_000, 1_000_000));
 
-export interface QuestionInput { text: string; options: string[]; correctIndex: number }
-export interface QuizInput { title: string; secondsPerQuestion?: number; questions: QuestionInput[] }
+export const QUESTION_TYPES = ["MULTIPLE_CHOICE", "TRUE_FALSE"] as const;
+export type QuestionType = (typeof QUESTION_TYPES)[number];
+/** A true/false question always has exactly these two answers, in this order: index 0 is True, index 1 is False. */
+export const TRUE_FALSE_OPTIONS = ["True", "False"] as const;
+/** What clients are told. Older questions have no stored type: they are multiple choice. */
+export const questionTypeOf = (q: { type?: QuestionType }): QuestionType => q.type ?? "MULTIPLE_CHOICE";
+
+/** A stored question. `jackpot` (double money) and `type: "TRUE_FALSE"` are omitted when off, so older quizzes look exactly as before. */
+export interface QuestionInput { text: string; options: string[]; correctIndex: number; jackpot?: boolean; type?: QuestionType }
+/** What a host may send: a true/false question does not need `options` (they are always True and False). */
+export type QuestionDraft = Omit<QuestionInput, "options"> & { options?: string[] };
+export interface QuizInput { title: string; secondsPerQuestion?: number; questions: QuestionDraft[] }
+export interface ValidQuiz { title: string; secondsPerQuestion: number; questions: QuestionInput[] }
 /** Cleans and validates a quiz. Returns the trimmed version or the first problem. */
-export function validateQuiz(input: QuizInput): { ok: true; quiz: Required<QuizInput> } | { ok: false; violation: Violation } {
+export function validateQuiz(input: QuizInput): { ok: true; quiz: ValidQuiz } | { ok: false; violation: Violation } {
   const bad = (m: string) => ({ ok: false as const, violation: v(422, "INVALID_QUIZ", m) });
   const title = String(input.title ?? "").trim();
   if (title.length < 3 || title.length > 100) return bad("The title must be 3 to 100 characters.");
@@ -86,12 +221,26 @@ export function validateQuiz(input: QuizInput): { ok: true; quiz: Required<QuizI
     const n = i + 1;
     const text = String(q?.text ?? "").trim();
     if (text.length < 3 || text.length > 300) return bad(`Question ${n}: the text must be 3 to 300 characters.`);
-    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) return bad(`Question ${n}: give 2 to 4 answers.`);
-    const options = q.options.map((o) => String(o ?? "").trim());
-    if (options.some((o) => o.length < 1 || o.length > 100)) return bad(`Question ${n}: every answer must be 1 to 100 characters.`);
-    if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) return bad(`Question ${n}: answers must be different from each other.`);
-    if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex >= options.length) return bad(`Question ${n}: mark which answer is correct.`);
-    questions.push({ text, options, correctIndex: q.correctIndex });
+    const type = q?.type ?? "MULTIPLE_CHOICE";
+    if (!(QUESTION_TYPES as readonly unknown[]).includes(type)) return bad(`Question ${n}: the type must be MULTIPLE_CHOICE or TRUE_FALSE.`);
+    let options: string[];
+    if (type === "TRUE_FALSE") {
+      // The two answers are fixed. A host may leave them out; if they are sent they must be exactly True then False, so index 0 always means True.
+      if (q.options !== undefined && !(Array.isArray(q.options) && q.options.length === 0)) {
+        const given = Array.isArray(q.options) ? q.options.map((o) => String(o ?? "").trim().toLowerCase()) : [];
+        if (given.length !== 2 || given[0] !== "true" || given[1] !== "false") return bad(`Question ${n}: a true/false question has the two answers True and False, in that order.`);
+      }
+      options = [...TRUE_FALSE_OPTIONS];
+      if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex > 1) return bad(`Question ${n}: mark whether the statement is True or False.`);
+    } else {
+      if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) return bad(`Question ${n}: give 2 to 4 answers.`);
+      options = q.options.map((o) => String(o ?? "").trim());
+      if (options.some((o) => o.length < 1 || o.length > 100)) return bad(`Question ${n}: every answer must be 1 to 100 characters.`);
+      if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) return bad(`Question ${n}: answers must be different from each other.`);
+      if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex >= options.length) return bad(`Question ${n}: mark which answer is correct.`);
+    }
+    if (q.jackpot !== undefined && typeof q.jackpot !== "boolean") return bad(`Question ${n}: jackpot must be true or false.`);
+    questions.push({ text, options, correctIndex: q.correctIndex, ...(type === "TRUE_FALSE" ? { type: "TRUE_FALSE" as const } : {}), ...(q.jackpot === true ? { jackpot: true } : {}) });
   }
   return { ok: true, quiz: { title, secondsPerQuestion: seconds, questions } };
 }

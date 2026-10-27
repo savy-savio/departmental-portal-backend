@@ -2,7 +2,7 @@ import { AppError } from "../../utils/AppError";
 import { StoreDuplicateError } from "../hod/store";
 import {
   ANSWER_GRACE_MS, checkAnswer, checkCancel, checkEndQuestion, checkLobbyOnly, checkNext, checkStart, generatePin, IDLE_CANCEL_MS, isOpen, isPin, MAX_PLAYERS_PER_GAME,
-  rankPlayers, scoreAnswer, validateNickname, validateQuiz, type QuizInput, type Violation,
+  formatMoney, questionTypeOf, rankPlayers, scoreAnswer, settleQuestion, validateNickname, validateQuiz, wealthTier, type QuizInput, type Violation,
 } from "./rules";
 import type { QuizStore } from "./store";
 import type { AnswerRec, GameRec, HostState, PlayerRec, PlayerState } from "./types";
@@ -239,14 +239,16 @@ export class QuizService {
     this.clearTimer(gameId);
     try {
       const [players, answers] = await Promise.all([this.d.store.listPlayers(gameId), this.d.store.listAnswers(gameId, index)]);
-      const byPlayer = new Map(answers.map((a) => [a.playerId, a]));
-      const updated = players.map((p) => {
-        const a = byPlayer.get(p.id);
-        if (!a) return { ...p, streak: 0 }; // no answer: the streak resets
-        return { ...p, score: p.score + a.points, streak: a.streakAfter, correctCount: p.correctCount + (a.correct ? 1 : 0), totalCorrectMs: p.totalCorrectMs + (a.correct ? a.elapsedMs : 0) };
-      });
-      const ranks = new Map(rankPlayers(updated.map((p) => ({ ...p, joinedAt: p.joinedAt.getTime() }))).map((p) => [p.id, p.rank]));
-      await this.d.store.commitPlayers(gameId, updated.map((p) => ({ id: p.id, score: p.score, streak: p.streak, correctCount: p.correctCount, totalCorrectMs: p.totalCorrectMs, rank: ranks.get(p.id) as number })));
+      // Answers pay their points, then the fastest correct player may steal from the leader (see settleQuestion).
+      const settled = settleQuestion(
+        players.map((p) => ({
+          id: p.id, score: p.score, streak: p.streak, correctCount: p.correctCount, totalCorrectMs: p.totalCorrectMs, joinedAt: p.joinedAt.getTime(), seq: p.seq,
+          lastQuestion: p.lastQuestion, lastDrop: p.lastDrop,
+        })),
+        answers.map((a) => ({ playerId: a.playerId, correct: a.correct, elapsedMs: a.elapsedMs, points: a.points, streakAfter: a.streakAfter, receivedSeq: a.seq })),
+        index,
+      );
+      await this.d.store.commitPlayers(gameId, settled.players);
       await this.d.store.casGame(gameId, { status: "QUESTION", questionIndex: index, closing: true }, { status: "REVEAL", closing: false });
     } catch (err) {
       await this.d.store.casGame(gameId, { status: "QUESTION", questionIndex: index, closing: true }, { closing: false }).catch(() => undefined); // let the timer / host retry
@@ -320,7 +322,7 @@ export class QuizService {
       limitMs: game.secondsPerQuestion * 1000, nowMs: this.d.now().getTime(), questionIndex: input.questionIndex, choice: input.choice, optionCount: q ? q.options.length : 0,
     });
     if (!verdict.ok) return fail(verdict.violation);
-    const scored = scoreAnswer({ correct: input.choice === q.correctIndex, elapsedMs: verdict.elapsedMs, limitMs: game.secondsPerQuestion * 1000, previousStreak: player.streak });
+    const scored = scoreAnswer({ correct: input.choice === q.correctIndex, elapsedMs: verdict.elapsedMs, limitMs: game.secondsPerQuestion * 1000, previousStreak: player.streak, jackpot: q.jackpot === true });
     try {
       await this.d.store.addAnswer({
         gameId, playerId: player.id, studentId: me.studentId, questionIndex: game.questionIndex, choice: input.choice, elapsedMs: scored.elapsedMs, correct: scored.correct,
@@ -350,7 +352,7 @@ export class QuizService {
     return rows.sort((a, b) => (b.game.finishedAt?.getTime() ?? 0) - (a.game.finishedAt?.getTime() ?? 0)).map(({ player, game }) => this.resultSummary(game, player, counts.get(game.id) ?? 0));
   }
   private resultSummary(game: GameRec, player: PlayerRec, playerCount: number) {
-    return { gameId: game.id, title: game.title, playedAt: game.finishedAt ?? game.createdAt, rank: player.finalRank, playerCount, score: player.score, correctCount: player.correctCount, totalQuestions: game.questions.length };
+    return { gameId: game.id, title: game.title, playedAt: game.finishedAt ?? game.createdAt, rank: player.finalRank, playerCount, score: player.score, scoreText: formatMoney(player.score), tier: wealthTier(player.score, game.questions.length), correctCount: player.correctCount, totalQuestions: game.questions.length };
   }
   async result(me: QuizPlayerIdentity, gameId: string) {
     const { game, player } = await this.myPlayer(me, gameId);
@@ -362,7 +364,7 @@ export class QuizService {
       ...this.resultSummary(game, player, players.length), top: view.final?.top ?? [],
       questions: game.questions.map((q, index) => {
         const a = byQ.get(index);
-        return { index, text: q.text, options: q.options, correctIndex: q.correctIndex, yourChoice: a ? a.choice : null, correct: Boolean(a?.correct), points: a?.points ?? 0 };
+        return { index, type: questionTypeOf(q), text: q.text, options: q.options, correctIndex: q.correctIndex, yourChoice: a ? a.choice : null, correct: Boolean(a?.correct), points: a?.points ?? 0, pointsText: formatMoney(a?.points ?? 0), jackpot: q.jackpot === true };
       }),
     };
   }

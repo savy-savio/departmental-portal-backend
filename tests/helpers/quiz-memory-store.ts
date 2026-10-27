@@ -44,7 +44,7 @@ export class QuizMemoryStore implements QuizStore {
   async addPlayer(r: NewPlayer) {
     if (this.players.some((p) => p.gameId === r.gameId && p.studentId === r.studentId)) throw new StoreDuplicateError("student");
     if (this.players.some((p) => p.gameId === r.gameId && p.nicknameKey === r.nicknameKey)) throw new StoreDuplicateError("nickname");
-    const p: PlayerRec = { id: this.nid("pl"), ...clone(r), score: 0, streak: 0, correctCount: 0, totalCorrectMs: 0, rank: null, finalRank: null };
+    const p: PlayerRec = { id: this.nid("pl"), ...clone(r), score: 0, streak: 0, correctCount: 0, totalCorrectMs: 0, rank: null, finalRank: null, lastQuestion: -1, lastDrop: 0 };
     this.players.push(p); return clone(p);
   }
   async listPlayers(g: string) { return clone(this.players.filter((p) => p.gameId === g).sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime() || a.seq - b.seq)); }
@@ -53,7 +53,7 @@ export class QuizMemoryStore implements QuizStore {
   async removePlayer(g: string, id: string) { const n = this.players.length; this.players = this.players.filter((p) => !(p.gameId === g && p.id === id)); return this.players.length < n; }
   async countPlayers(ids: string[]) { const m = new Map<string, number>(); for (const p of this.players) if (ids.includes(p.gameId)) m.set(p.gameId, (m.get(p.gameId) ?? 0) + 1); return m; }
   async openGameOfStudent(s: string) { for (const p of this.players.filter((x) => x.studentId === s)) { const g = this.games.find((x) => x.id === p.gameId && x.open); if (g) return clone(g); } return null; }
-  async commitPlayers(g: string, updates: PlayerCommit[]) { for (const u of updates) { const p = this.players.find((x) => x.gameId === g && x.id === u.id); if (p) Object.assign(p, { score: u.score, streak: u.streak, correctCount: u.correctCount, totalCorrectMs: u.totalCorrectMs, rank: u.rank, ...(u.finalRank !== undefined ? { finalRank: u.finalRank } : {}) }); } }
+  async commitPlayers(g: string, updates: PlayerCommit[]) { for (const u of updates) { const p = this.players.find((x) => x.gameId === g && x.id === u.id); if (p) Object.assign(p, { score: u.score, streak: u.streak, correctCount: u.correctCount, totalCorrectMs: u.totalCorrectMs, rank: u.rank, ...(u.finalRank !== undefined ? { finalRank: u.finalRank } : {}) }, Object.fromEntries(("lastQuestion lastDrop".split(" ") as (keyof PlayerCommit)[]).filter((k) => u[k] !== undefined).map((k) => [k, u[k]]))); } }
   async finishedGamesOfStudent(s: string) {
     return this.players.filter((p) => p.studentId === s).flatMap((p) => { const g = this.games.find((x) => x.id === p.gameId && x.status === "FINISHED"); return g ? [{ player: clone(p), game: clone(g) }] : []; });
   }

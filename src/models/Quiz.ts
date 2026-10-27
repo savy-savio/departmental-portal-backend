@@ -7,10 +7,10 @@ export interface IQuiz {
   level: string;
   title: string;
   secondsPerQuestion: number;
-  questions: { text: string; options: string[]; correctIndex: number }[];
+  questions: { text: string; options: string[]; correctIndex: number; jackpot?: boolean; type?: "MULTIPLE_CHOICE" | "TRUE_FALSE" }[];
   timesHosted: number;
 }
-const questionSchema = new Schema({ text: { type: String, required: true, maxlength: 300 }, options: { type: [String], required: true }, correctIndex: { type: Number, required: true } }, { _id: false });
+const questionSchema = new Schema({ text: { type: String, required: true, maxlength: 300 }, options: { type: [String], required: true }, correctIndex: { type: Number, required: true }, jackpot: { type: Boolean, default: false }, type: { type: String, enum: ["MULTIPLE_CHOICE", "TRUE_FALSE"], default: "MULTIPLE_CHOICE" } }, { _id: false });
 const schema = new Schema<IQuiz>(
   {
     owner: { type: Schema.Types.ObjectId, ref: "Student", required: true, index: true },

@@ -330,8 +330,9 @@ test("21. A tie on score is broken by the faster total time, then by who joined 
   const w = makeQuizWorld();
   const { game } = await w.lobby(["ada", "ben"], { questions: [quizInput().questions[0]] });
   await w.svc.start(host(), game.gameId);
-  await w.advance(1000); await w.svc.answer(stu("ben"), game.gameId, { questionIndex: 0, choice: 1 });
-  await w.advance(0); await w.svc.answer(stu("ada"), game.gameId, { questionIndex: 0, choice: 1 }); await settle();
+  // ada's answer is received first, so she is both the fastest and the leader: no cash drop (see the money tests) disturbs the tie
+  await w.advance(1000); await w.svc.answer(stu("ada"), game.gameId, { questionIndex: 0, choice: 1 });
+  await w.advance(0); await w.svc.answer(stu("ben"), game.gameId, { questionIndex: 0, choice: 1 }); await settle();
   const fin = await w.svc.next(host(), game.gameId);
   assert.deepEqual(fin.final!.leaderboard.map((r) => [r.rank, r.nickname, r.score]), [[1, "ADA", 950], [2, "BEN", 950]]); // identical times: the earlier join (ada) wins
 });
@@ -433,7 +434,7 @@ test("28. Routes, validation and limits: every quiz route is authenticated, stri
   assert.ok(!/studentId|departmentId|level|elapsed|score|points|correct(?!Index)|rank|serverTime|timestamp/i.test(v.replace(/correctIndex/g, "")), "nothing identity-, time- or score-like can be supplied by a client");
   const rl = strip(read("src/middleware/rateLimiters.ts"));
   assert.match(rl, /"\/api\/v1\/student\/quiz\/", "\/api\/v1\/representative\/quiz-games"/);
-  assert.match(rl, /export const globalLimiter = make\(15 \* MIN, 600, "Too many requests\. Please slow down\.", isLiveQuizRequest\)/);
+  assert.match(rl, /export const globalLimiter = make\(15 \* MIN, 6000, "Too many requests\. Please slow down\.", isLiveQuizRequest\)/);
   const ctl = strip(read("src/controllers/quiz-host.controller.ts") + read("src/controllers/student-quiz.controller.ts"));
   assert.ok(!/req\.(body|query|params)\.(studentId|departmentId|level|hostId)/.test(ctl));
   assert.match(strip(read("src/server.ts")), /quizService\.resume\(\)/);

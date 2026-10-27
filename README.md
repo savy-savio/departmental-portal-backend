@@ -573,3 +573,104 @@ Implements the "Live quiz: API contract". A class rep writes quizzes and hosts a
 - **Error codes** are those in section 9, plus `INVALID_NICKNAME`, `INVALID_QUIZ`, `INVALID_CHOICE`, `INVALID_ANSWER`, `QUIZ_NOT_FOUND`, `ALREADY_IN_GAME`, `GAME_FULL`. No session-ending code (`TOKEN_*`, `PASSWORD_CHANGED`) is used for anything else.
 - **Choices to know about:** a student who is already a player gets their player back when they enter the PIN again, in any phase (so a refresh mid-game works). Nicknames allow letters, numbers, spaces, `. _ ' -` and emoji in any language, 2 to 20 visible characters (an emoji family counts as 1); markup, control and invisible characters are rejected. A game is capped at 500 players. A removed student receives a `quiz:state` with `phase: "CANCELLED"` and a 403 `NOT_ELIGIBLE` afterwards.
 - **Limits of this version:** timers live in one process, so run a single instance (or sticky sessions plus the Socket.IO Redis adapter). An answer that reaches the server in the few milliseconds while a question is being closed can be stored without being scored. Tested with an in-memory store and a fake clock; **not yet run against a real MongoDB or the real app**.
+
+### Playing for money (the live quiz pays dollars, not points)
+Every old "point" is now **one dollar**, so the numbers did not change (a lightning-fast correct answer is worth **$1,000**, down to **$500** at the last second). All existing fields (`score`, `points`, `streakBonus`) keep their names and stay plain integers, so an older frontend keeps working; the fields below are **added** next to them and are ready to show.
+
+| What | Rule |
+|---|---|
+| **Cash per answer** | `$1,000` (instant) down to `$500` (last second); wrong or no answer = `$0` and the streak resets |
+| **Hot-streak bonus** | `$0, $100, $200 ...` for consecutive correct answers, capped at `$500` (`streakBonus`) |
+| **JACKPOT question** | The rep flags a question with `"jackpot": true` (create/update a quiz). It pays **double** (base + streak bonus). Players are told with the question (`question.jackpot`), before they answer |
+| **Net-worth title** | Judged against `$1,000 x questions`, so a short and a long quiz mean the same: `Broke` (0), `Pocket Change`, `Saving Up` (20%), `Big Spender` (40%), `High Roller` (60%), `Millionaire` (80%), `Billionaire` (100%). Players level up as the game goes on |
+
+**New fields** (all additive):
+- `PlayerState.me`: `scoreText` (`"$12,500"`), `tier { level, id, title, emoji }`.
+- `PlayerState.question`: `jackpot`. `HostState.question` and `HostState.reveal`: `jackpot`.
+- `PlayerState.reveal`: `pointsText`, `scoreText`, `jackpot`, `tier`, `headline` (the cash-register line, for example `"🎰 JACKPOT! +$1,900"`, `"🔥 3 in a row! +$1,150"`, `"⚡ Fastest hands in the room! +$1,050"`, `"💰 Cha-ching! +$950"`, `"💸 Ouch! No cash this round."`), and `levelUp` (the new `tier` when this answer lifted the player into a higher title, otherwise `null`: show the celebration when it is set).
+- Every leaderboard row (`topFive`, `top`, `leaderboard`): `scoreText`, `tier`. `PlayerState.final`: `scoreText`, `tier`.
+- Results (`/results`, `/games/:gameId/result`): `scoreText`, `tier`, and per question `pointsText`, `jackpot`.
+
+Quizzes saved before this change have no jackpot questions and behave exactly as before.
+
+#### Cash drops
+After each question is paid out, **the player who answered correctly fastest steals 5% of the leader's cash** (capped at $500, in whole tens). Nobody is robbed when the fastest player *is* the leader, when nobody was right, or when the leader has under $200. The money moves between players; none is created. The leader is judged **after** this question's prizes are paid. Ties for fastest go to whoever the server received first.
+
+#### True/false questions
+A question has an optional `"type"`: `"MULTIPLE_CHOICE"` (the default) or `"TRUE_FALSE"`. A true/false question needs **no `options`**: its answers are always `["True", "False"]` (index `0` = True, `1` = False), and `correctIndex` is `0` or `1`. If a client does send `options`, they must be True then False. It can also be a jackpot. Players answer it with the same `POST .../answer` call (`choice` 0 or 1).
+```json
+{ "text": "The sun is a star.", "type": "TRUE_FALSE", "correctIndex": 0, "jackpot": false }
+```
+
+**More new fields** (all additive; older clients ignore them):
+- `PlayerState.question.type`, `PlayerState.reveal.type`, `HostState.question.type`, `HostState.reveal.type`: `"MULTIPLE_CHOICE" | "TRUE_FALSE"` (so the frontend can draw two big True / False buttons). Results review questions carry `type` too.
+- `PlayerState.reveal`: `cashDrop` (`null` or `{ amount, amountText, thief: { nickname, you? }, victim: { nickname, you? }, message }`; `message` is already written for the reader, for example `"😱 CY stole $180 from you!"`), `change` / `changeText` (everything that happened to this player's money on the question, the answer and any drop together, for example `"+$950"` or `"-$120"`), and `levelDown` (the lower tier when a robbery demoted the player; the counterpart of `levelUp`). `points` is still just what the answer itself paid.
+- `HostState.reveal`: `cashDrop` (same shape, written for the room: `"🦹 CY stole $180 from the leader, ADA!"`).
+ The currency symbol is `$` (US dollars) in the `*Text` fields; the numbers themselves are plain integers if the frontend prefers its own formatting.
+
+## Sign-in rate limits
+A whole class shares one campus Wi-Fi IP, so the public sign-in routes are limited **per person, not per IP** (`src/middleware/rateLimiters.ts`). Each limiter is a pair: a per-identity limit and a generous per-IP flood backstop.
+
+| Routes | Limited by | Allowance | Counts |
+|---|---|---|---|
+| `/auth/login` (student, lecturer, HOD) | email (trimmed, lower case) | 10 per 15 min | failed attempts only |
+| `/onboarding/verify` | matric number | 10 per 15 min | failed attempts only |
+| `/auth/forgot-password` (all roles) | email | 5 per hour | **every** request (each one sends a mail) |
+| `/onboarding/complete`, `/auth/reset-password`, `/auth/activate` | IP only (the request already carries a signed or random token) | flood backstop | failed attempts only |
+
+One student's typos therefore never block a classmate, and a successful sign-in never uses up the allowance. A request with no email or matric number is counted under the IP. Set `TRUST_PROXY` correctly in production, otherwise every user appears to come from the proxy's IP and the IP backstop is shared by everyone. The global per-IP limit is 6,000 requests per 15 minutes, and the live quiz paths are exempt from it.
+
+## AI complaint assistant (`/api/v1/student/complaints/ai-assist`)
+
+Powers the **Improve with AI** button on the complaint form. It is stateless: it returns a suggestion and saves nothing, so the student stays in control ("nothing changes until you approve it").
+
+### Setup
+Add to `.env` (no new npm package: it uses Node's built-in `fetch`). Leave the key empty to switch the feature off.
+
+```
+GEMINI_API_KEY=AIza...              # FREE: https://aistudio.google.com/apikey (no card; rate limits apply)
+# ANTHROPIC_API_KEY=sk-ant-...      # paid alternative: https://console.anthropic.com
+# AI_PROVIDER=gemini                # optional: "gemini" or "anthropic". When unset, the provider whose key is set is used (Gemini first)
+# AI_MODEL=gemini-2.5-flash-lite    # optional. Defaults: gemini-2.5-flash-lite / claude-haiku-5-5
+AI_TIMEOUT_MS=25000                 # optional
+PORTAL_TIMEZONE=Africa/Lagos        # optional; the date printed on a letter
+```
+
+**Free tier and privacy.** The Gemini free tier has rate limits (a handful of requests per minute, shared by *all* students, and a daily cap), so at busy times students may see "the AI assistant is busy": the form itself keeps working. Google's free-tier terms also allow it to use submitted content to improve its products, and human reviewers may read it. Complaint drafts are personal, so tell students not to put passwords or sensitive details in the text, and consider a paid key (Gemini paid tier or Anthropic) before a wide rollout. Limits and terms change; check https://ai.google.dev/gemini-api/docs/rate-limits.
+
+### Endpoints (student token required)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/complaints/ai-assist` | `{ available, minMessageChars, maxMessageChars, actions: [{ id, label, description, target }] }`. Use `available` to show/hide the button and `actions` to draw the cards. |
+| `POST` | `/complaints/ai-assist` | Run one action on the current draft (below). |
+
+`POST` body (strict; unknown fields are rejected):
+
+```json
+{ "action": "IMPROVE", "message": "at least 20 characters...", "title": "optional", "courseId": "optional" }
+```
+
+| `action` | Result | `target` (where to put it if the student accepts) |
+|---|---|---|
+| `IMPROVE` | Better wording and structure | `message` |
+| `PROFESSIONAL` | Formal, respectful tone | `message` |
+| `GRAMMAR` | Spelling and punctuation only | `message` |
+| `CLEARER` | Shorter, easier to follow | `message` |
+| `SUMMARIZE` | Short summary (about 60 words) | `none` (display only) |
+| `SUGGEST_TITLE` | One clear title (max 150 chars) | `title` |
+| `DRAFT_LETTER` | The complaint written as a formal letter to the Head of Department | `letter` |
+
+Response: `{ success, data: { action, target, result } }`. For `DRAFT_LETTER`, `data` also has `body` (just the paragraphs, for the message field) and `letter` (`senderLines`, `date`, `recipientLines`, `salutation`, `subject`, `paragraphs`, `closing`, `signatureLines`) so the frontend can lay it out or print it; `result` is the whole letter as plain text.
+
+`courseId` is optional context (a course of the student's own department) used only to name the course in a title or letter.
+
+### How it stays safe
+- The student's identity in a letter (name, matric number, level, department, faculty, date) comes from the authenticated student's record. The model only writes the subject and body, so it cannot invent or change who the letter is from.
+- The draft is fenced as data and any tag-like text inside it is removed, so a complaint that says "ignore your instructions" is just treated as text. The prompt also forbids inventing facts, names, dates or accusations.
+- A cut-off or empty reply is rejected rather than returned, so a suggestion can never silently drop the end of a complaint.
+- Limited to 30 calls per student per hour (`aiAssistLimiter`). Complaint text is sent to the AI provider (that is the feature) but is never logged.
+
+Errors: `422` draft too short/long or bad field, `503` assistant off (`AI_NOT_CONFIGURED`), unavailable or busy, `504` timed out, `502` the model returned an unusable reply (try again).
+
+Tests: `tests/complaint-ai.test.ts` (prompts, cleaning, letter assembly, provider error handling with a fake `fetch`, validator).

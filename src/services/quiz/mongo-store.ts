@@ -10,7 +10,12 @@ import type { AnswerRec, GameExpect, GamePatch, GameRec, NewAnswer, NewGame, New
 const id = (v: unknown) => String(v);
 const stamps = (d: unknown) => d as { createdAt: Date; updatedAt: Date };
 const isDup = (e: unknown) => (e as { code?: number })?.code === 11000;
-const qs = (list: { text: string; options: string[]; correctIndex: number }[]): QuestionInput[] => list.map((q) => ({ text: q.text, options: [...q.options], correctIndex: q.correctIndex }));
+const qs = (list: { text: string; options: string[]; correctIndex: number; jackpot?: boolean; type?: string }[]): QuestionInput[] =>
+  list.map((q) => ({
+    text: q.text, options: [...q.options], correctIndex: q.correctIndex,
+    ...(q.type === "TRUE_FALSE" ? { type: "TRUE_FALSE" as const } : {}), // omitted for multiple choice, so older questions keep their exact shape
+    ...(q.jackpot ? { jackpot: true } : {}),
+  }));
 
 const toQuiz = (q: QuizDocument): QuizRec => ({ id: id(q._id), ownerId: id(q.owner), departmentId: id(q.department), level: q.level, title: q.title, secondsPerQuestion: q.secondsPerQuestion, questions: qs(q.questions), timesHosted: q.timesHosted, createdAt: stamps(q).createdAt, updatedAt: stamps(q).updatedAt });
 const toGame = (g: QuizGameDocument): GameRec => ({
@@ -21,7 +26,14 @@ const toGame = (g: QuizGameDocument): GameRec => ({
 const toPlayer = (p: QuizPlayerDocument): PlayerRec => ({
   id: id(p._id), gameId: id(p.game), studentId: id(p.student), nickname: p.nickname, nicknameKey: p.nicknameKey, score: p.score, streak: p.streak, correctCount: p.correctCount,
   totalCorrectMs: p.totalCorrectMs, rank: p.rank ?? null, finalRank: p.finalRank ?? null, joinedAt: p.joinedAt, seq: p.seq,
+  lastQuestion: p.lastQuestion ?? -1, lastDrop: p.lastDrop ?? 0, // older players have neither
 });
+/** The last-result fields of a commit are only written when the commit carries them (the final-ranks commit does not). */
+const optionalNumbers = (u: PlayerCommit) => {
+  const out: Record<string, number> = {};
+  for (const k of ["lastQuestion", "lastDrop"] as const) if (u[k] !== undefined) out[k] = u[k] as number;
+  return out;
+};
 const toAnswer = (a: QuizAnswerDocument): AnswerRec => ({ id: id(a._id), gameId: id(a.game), playerId: id(a.player), studentId: id(a.student), questionIndex: a.questionIndex, choice: a.choice, elapsedMs: a.elapsedMs, correct: a.correct, points: a.points, streakBonus: a.streakBonus, streakAfter: a.streakAfter, seq: a.seq });
 
 /** MongoDB implementation. Phase changes are single conditional updates (findOneAndUpdate with the expected state in the filter). */
@@ -86,7 +98,7 @@ export class MongoQuizStore implements QuizStore {
   }
   async commitPlayers(gameId: string, updates: PlayerCommit[]) {
     if (!updates.length) return;
-    await QuizPlayer.bulkWrite(updates.map((u) => ({ updateOne: { filter: { _id: u.id, game: gameId }, update: { $set: { score: u.score, streak: u.streak, correctCount: u.correctCount, totalCorrectMs: u.totalCorrectMs, rank: u.rank, ...(u.finalRank !== undefined ? { finalRank: u.finalRank } : {}) } } } })));
+    await QuizPlayer.bulkWrite(updates.map((u) => ({ updateOne: { filter: { _id: u.id, game: gameId }, update: { $set: { score: u.score, streak: u.streak, correctCount: u.correctCount, totalCorrectMs: u.totalCorrectMs, rank: u.rank, ...(u.finalRank !== undefined ? { finalRank: u.finalRank } : {}), ...optionalNumbers(u) } } } })));
   }
   async finishedGamesOfStudent(studentId: string) {
     const mine = await QuizPlayer.find({ student: studentId });

@@ -23,6 +23,7 @@ import {
   deviceRegisterLimiter,
   deviceVerificationLimiter,
   complaintLimiter,
+  aiAssistLimiter,
   resetPasswordLimiter,
   uploadLimiter,
   voteLimiter,
@@ -35,6 +36,7 @@ import {
 } from "../validators/student-academic.validators";
 import { addCourseSchema, enrollmentIdParams, updateEnrollmentSchema } from "../validators/student-courses.validators";
 import { createComplaintSchema, complaintsQuery, updateComplaintSchema } from "../validators/student-complaints.validators";
+import { complaintAiSchema } from "../validators/complaint-ai.validators";
 import { challengeBody, markAttendanceBody, passwordBody, registerDeviceBody } from "../validators/student-attendance.validators";
 import { attendanceQuery, notificationsQuery, sessionIdParams } from "../validators/student-services.validators";
 import { castVotesSchema, electionIdParams } from "../validators/student-elections.validators";
@@ -135,6 +137,9 @@ router.get("/complaints", authenticateStudent, validate({ query: complaintsQuery
 router.get("/complaints/stats", authenticateStudent, svc.complaintStats);
 router.get("/complaints/upload-constraints", authenticateStudent, svc.complaintConstraints);
 router.post("/complaints", authenticateStudent, complaintLimiter, validate({ body: createComplaintSchema }), svc.createComplaint);
+// AI writing assistant (stateless: returns a suggestion, saves nothing). Static paths, so they stay above "/complaints/:id".
+router.get("/complaints/ai-assist", authenticateStudent, svc.complaintAiInfo);
+router.post("/complaints/ai-assist", authenticateStudent, aiAssistLimiter, validate({ body: complaintAiSchema }), svc.complaintAiAssist);
 router.get("/complaints/:id", authenticateStudent, validate({ params: idParams }), svc.getComplaint);
 router.patch("/complaints/:id", authenticateStudent, validate({ params: idParams, body: updateComplaintSchema }), svc.updateComplaint);
 router.post(
